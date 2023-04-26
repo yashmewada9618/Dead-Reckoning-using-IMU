@@ -7,3 +7,10 @@ Steps performed here are:
 - Complementary Filter (Combination of High Pass and Low Pass filter) on Yaw from Gyro and magnetometer
 - Estimating forward velocity from accelerometer
 - Estimating the Center Of Mass of the vehicle based on the IMU's Linear and angular velocities.
+
+
+![Magnetometer Calibration](https://github.com/yashmewada9618/Dead-Reckoning-using-IMU/blob/main/src/Analysis/plot-calibrated_mag.png)
+![Complementary Filter](https://github.com/yashmewada9618/Dead-Reckoning-using-IMU/blob/main/src/Analysis/plot-complemetary_filter.png)
+![Trajectory](https://github.com/yashmewada9618/Dead-Reckoning-using-IMU/blob/main/src/Analysis/plot-est_traj.png)
+![Velocity Estimation](https://github.com/yashmewada9618/Dead-Reckoning-using-IMU/blob/main/src/Analysis/plot-vel%20est%20both.png)
+
