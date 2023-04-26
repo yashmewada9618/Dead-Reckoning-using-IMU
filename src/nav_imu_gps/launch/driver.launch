@@ -1,0 +1,12 @@
+<launch>
+    <arg name="port" default="None"/>
+    <arg name="gps_port" default="None"/>
+
+    <node name="imu_driver" pkg="nav_imu_gps" type="driver_imu.py" output="screen">
+    <param name="port" value="$(arg port)"/>
+    </node>
+    
+    <node name="gps" pkg="nav_imu_gps" type="driver_gps.py" output="screen">
+    <param name="gps_port" value="$(arg gps_port)"/>
+    </node>
+</launch>

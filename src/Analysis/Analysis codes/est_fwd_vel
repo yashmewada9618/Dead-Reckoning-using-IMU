@@ -1,0 +1,371 @@
+#!/bin/env python3
+# from bagpy import bagreader
+import pandas as pd
+import seaborn as sea
+from mpl_toolkits.mplot3d import Axes3D
+from scipy import linalg, integrate
+from scipy.signal import butter,filtfilt, detrend
+import matplotlib.pyplot as plt
+import numpy as np
+from yaw_est import yaw_estimate
+
+class vel_est:
+    def __init__(self,bag_file):
+        # my_bag = bagreader(bag_file)
+        # self.my_topic = my_bag.message_by_topic('/vectornav')
+        self.my_topic = bag_file
+        self.imu_data = pd.read_csv(self.my_topic)
+        self.start = 2900
+        self.stop = 4500
+
+    def detrend(self,data):
+        remove_val=[]
+        for i in range(1,len(data)):
+            if (abs(data[i]-data[i-1])<0.01):
+                remove_val.append(data[i-1])
+            elif len(remove_val)>0:
+                mean=np.mean(remove_val)
+                data[i:]=data[i:]-mean
+                remove_val=[]
+        return data
+    
+
+    
+    def fromaccelnew(self):
+        linAccel = self.imu_data['linear_acceleration.x'][4500:] - self.imu_data['linear_acceleration.x'][4500]
+        linAccely = self.imu_data['linear_acceleration.y'][4500:] - self.imu_data['linear_acceleration.y'][4500]
+        linAccelz = self.imu_data['linear_acceleration.z'][4500:] - self.imu_data['linear_acceleration.z'][4500]
+        
+
+        fs = 20
+        fcl = 0.1
+        fch = 5
+
+        order = 3
+        nqy = 0.5*fs
+        cutoffl = fcl/nqy
+        high = fch/nqy
+        # print(cutoff)
+        b,a = butter(order,cutoffl,btype='low',analog=False)
+
+        accel_low = filtfilt(b,a,linAccel)
+
+        fs = 20
+        fcl = 0.001
+        fch = 5
+
+        order = 3
+        nqy = 0.5*fs
+        cutoffl = fcl/nqy
+        high = fch/nqy
+        # print(cutoff)
+        b,a = butter(order,cutoffl,btype='high',analog=False)
+
+        accel_filtered = filtfilt(b,a,accel_low)
+
+        meanx = linAccel.mean()
+        meany = linAccely.mean()
+        meanz = linAccelz.mean()
+        
+        magnitude = np.sqrt(meanx**2 + meany**2 + meanz**2)
+
+        new_accel = (linAccel - meanx)
+
+        time_step = self.imu_data['header.stamp.secs'][4500:] - self.imu_data['header.stamp.secs'][4500]
+
+        sub_data = detrend(accel_filtered)
+        sub_dataY = detrend(linAccely.to_numpy())
+        sub_dataZ = detrend(linAccelz.to_numpy())
+        new_data = detrend(linAccel.to_numpy())
+        # sub_data1 = detrend(velFiltered)
+        # print(velFiltered[0])
+
+        vel = integrate.cumtrapz(sub_data - sub_data[0], dx = 0.05,initial=0)
+        vel_new = integrate.cumtrapz(new_data, dx = 0.05,initial=0)
+        velY = integrate.cumtrapz(sub_dataY - sub_dataY[0], dx = 0.05,initial=0)
+        velZ = integrate.cumtrapz(sub_dataZ - sub_dataZ[0], dx = 0.05,initial=-9.387)
+        magXYZ = np.sqrt(vel**2)
+        magnitude = np.sqrt(vel.mean()**2 + velY.mean()**2)
+        nlx = linAccel.to_numpy()
+        nly = linAccely.to_numpy()
+        nlz = linAccelz.to_numpy()
+        thres = 0.3
+        fs = 20
+        fcl = 0.001
+        fch = 7
+
+        order = 3
+        nqy = 0.5*fs
+        cutoffl = fcl/nqy
+        high = fch/nqy
+        # print(cutoff)
+        b,a = butter(order,cutoffl,btype='low',analog=False)
+
+        velnew = filtfilt(b,a,vel)
+        for i in range(1,len(linAccely)):
+            delX = nlx[i] - nlx[i-1]
+            delY = nly[i] - nly[i-1]
+            delZ = nlz[i] - nlz[i-1]
+            if abs(delX) < thres and abs(delY) < thres and abs(delZ) < thres:
+                velnew[i] = 0.0
+                vel[i] = 0.0
+            else:
+                velnew[i] -= velnew[i-1]
+                vel[i] -= vel[i-1]
+
+        # vel = vel - magnitude
+
+        # fs = 20
+        # fc = 0.1
+
+        # order = 3
+        # nqy = 0.5*fs
+        # cutoff = fc/nqy
+        # print(cutoff)
+        # b,a = butter(order,cutoff,btype='high',analog=False)
+
+        # new = filtfilt(b,a,vel)
+
+        # cp = new + velFiltered
+        # velFiltered = velFiltered - magnitude
+        # velFiltered = velFiltered - velFiltered[0]
+        # vel = vel - magnitude
+        # sea.lineplot(x = time_step[:16310],y=velnew[:16310],label = "adjusted velocity")
+        # # sea.lineplot(x = time_step[:16310],y=vel_new[:16310],label = "original")
+        # # sea.lineplot(x = time_step[:16310],y=linAccel[:16310],label = "Original")
+        # sea.lineplot(x = time_step[:16310],y=vel[:16310],label = "vel from accel")
+        # plt.title("Velocity estimations across X")
+        # plt.xlabel('Time (s)')
+        # plt.ylabel('Vel m\s')
+        # plt.legend()
+        # plt.grid()
+        # filename = 'plot-' + str('vel est') +'.png'
+        # plt.savefig(filename)
+        # plt.show()
+        return velnew
+    
+    def displacement(self,gpsVel,imuVel):
+
+        time_step = self.imu_data['header.stamp.secs'][4500:] - self.imu_data['header.stamp.secs'][4500]
+        linAccely = self.imu_data['linear_acceleration.y'][4500:] - self.imu_data['linear_acceleration.y'][4500]
+        angVel = self.imu_data['angular_velocity.z'][4500:] - self.imu_data['angular_velocity.z'][4500]
+        # W = self.imu_data['imu.w']
+        # X = self.imu_data['imu.x']
+        # Y = self.imu_data['imu.y']
+        # Z = self.imu_data['imu.z']
+        # imuYaw,_,_ = self.to_eulers(W,X,Y,Z)
+        wXdot = angVel*imuVel
+        # fs = 20
+        # fc = 0.05
+
+        # order = 3
+        # nqy = 0.5*fs
+        # cutoff = fc/nqy
+        # print(cutoff)
+        # b,a = butter(order,cutoff,btype='low',analog=False)
+
+        # yawFiltered = filtfilt(b,a,wXdot)
+        # t = np.arange(wXdot.shape[0])/fs
+        # sea.lineplot(x=t,y=magYaw,label = '
+        # velY = integrate.cumtrapz(linAccely,dx=0.05,initial=-0.313)
+        gps = pd.read_csv(gps_data)
+        time = gps['Header.stamp.secs'][450:] - gps['Header.stamp.secs'][450]
+        gpsDisp = integrate.cumtrapz(gpsVel,dx=0.5)
+        imuDisp = integrate.cumtrapz(imuVel,dx = 0.05)
+        # sea.lineplot(x = time_step[:20834],y=wXdot,label = "linY")
+        sea.lineplot(x=time[:1631],y=gpsDisp,label = "gps disp")
+        sea.lineplot(x=time_step[:16310],y=imuDisp[:16310],label = "imu disp")
+        # sea.lineplot(x = time_step[:20834],y=detrend(velY),label = "xdot")
+        plt.grid()
+        plt.show()
+
+    def COMEst(self,gpsVel,imuVel):
+        linAccel = self.imu_data['linear_acceleration.x'][4500:] - self.imu_data['linear_acceleration.x'][4500]
+        linAccely = self.imu_data['linear_acceleration.y'][4500:] - self.imu_data['linear_acceleration.y'][4500]
+        linAccelz = self.imu_data['linear_acceleration.z'][4500:] - self.imu_data['linear_acceleration.z'][4500]
+        time_step = self.imu_data['header.stamp.secs'][4500:] - self.imu_data['header.stamp.secs'][4500]
+        angVel = self.imu_data['angular_velocity.z'][4500:] - self.imu_data['angular_velocity.z'][4500]
+        
+        wXdot = angVel*imuVel
+        
+        fs = 20
+        fcl = 0.1
+        fch = 5
+
+        order = 3
+        nqy = 0.5*fs
+        cutoffl = fcl/nqy
+        high = fch/nqy
+        # print(cutoff)
+        b,a = butter(order,cutoffl,btype='low',analog=False)
+
+        new_wxdot = filtfilt(b,a,wXdot)
+
+        # sea.lineplot(x = time_step[:20834],y=wXdot,label = r'$\omega Xdot$')
+        # sea.lineplot(x = time_step[:20834],y=new_wxdot,label = r'$Filtered \omega Xdot$')
+        # sea.lineplot(x = time_step[:20834],y=detrend(linAccely),label = "Accel Y")
+        # plt.legend()
+        # plt.grid()
+        # filename = 'plot-' + str('filtered_COMest') +'.png'
+        # plt.savefig(filename)
+        # plt.show()
+
+    def to_eulers(self,w,x,y,z):
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+        sinp = np.sqrt(1 + 2 * (w * y - x * z))
+        cosp = np.sqrt(1 - 2 * (w * y - x * z))
+        pitch = 2 * np.arctan2(sinp, cosp) - np.pi / 2
+
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+        return np.degrees(yaw),np.degrees(pitch),np.degrees(roll)
+    
+    def fromAccel(self):
+        linAccel = self.imu_data['linear_acceleration.x'][4500:] - self.imu_data['linear_acceleration.x'][4500]
+        time_step = self.imu_data['header.stamp.secs'][4500:] - self.imu_data['header.stamp.secs'][4500]
+
+        sub_data = detrend(linAccel.to_numpy())
+        # sub_data1 = detrend(velFiltered)
+        # print(velFiltered[0])
+        vel = integrate.cumtrapz(sub_data - sub_data[0], dx = 0.05,initial=0.41)
+        
+        # vel1 = integrate.cumtrapz(velFiltered - velFiltered[0], dx = 0.05,initial=-0.009946190919434557)
+        fs = 20
+        fc = 0.1
+
+        order = 3
+        nqy = 0.5*fs
+        cutoff = fc/nqy
+        print(cutoff)
+        b,a = butter(order,cutoff,btype='high',analog=False)
+
+        velFiltered = filtfilt(b,a,detrend(vel)[:16310])
+
+        sea.lineplot(x = time_step[:16310],y=detrend(vel)[:16310],label = "accel_int")
+        # sea.lineplot(x = time_step[:16310],y=velFiltered[:16310],label = "low_pass_accel")
+        # plt.xlabel('Time (s)')
+        # plt.ylabel('Vel (m/s)')
+        # plt.legend()
+        # plt.grid()
+        # plt.show()
+        return detrend(vel)
+
+    def fromGps(self,gps_data):
+        gps = pd.read_csv(gps_data)
+        time = gps['Header.stamp.secs'][450:] - gps['Header.stamp.secs'][450]
+        east = gps['UTM_easting'][450:] - gps['UTM_easting'][450]
+        north = gps['UTM_northing'][450:] - gps['UTM_northing'][450]
+        velX = []
+        velY = []
+        finalVel = []
+        for i in range(450,len(east)-1):
+            velX.append((east[i + 1] - east[i])/(gps['Header.stamp.secs'][i+1] - gps['Header.stamp.secs'][i]))
+            velY.append((north[i + 1] - north[i])/(gps['Header.stamp.secs'][i+1] - gps['Header.stamp.secs'][i]))
+        
+        for i in range(len(velX)):
+            mag = np.sqrt(velX[i]**2 + velY[i]**2)
+            finalVel.append(mag)
+        # print(time.shape)
+        # print(len(finalVel))
+        # sea.lineplot(x = time[:1632],y=finalVel,label = "vel from GPS")
+        # plt.grid()
+        # plt.title("Velocity comparision between GPS and IMU")
+        # filename = 'plot-' + str('vel est both') +'.png'
+        # plt.savefig(filename)
+        # plt.show()
+        return finalVel
+
+    def vel(self):
+        intdata = self.fromAccel()
+        meanAccel = intdata.mean()      
+        self.imu_data['time'] = self.imu_data['header.stamp.secs'] - self.imu_data['header.stamp.secs'][0]
+        print(self.imu_data['time'][:20834].shape)
+        print(intdata.shape)
+        accelvel = integrate.cumtrapz(self.imu_data['time'][:20834],intdata,initial=0)
+        sea.lineplot(x = self.imu_data['time'][:20834],y=accelvel,label = "diff.")
+        # plt.show()
+    
+    def trajEst(self,CPF,fv,gps_data):
+        gps = pd.read_csv(gps_data)
+        east = gps['UTM_easting'][450:] - gps['UTM_easting'][450]
+        north = gps['UTM_northing'][450:] - gps['UTM_northing'][450]
+        
+        # newtraj = []
+        # ve = []
+        # vn = []
+        # time_step = self.imu_data['header.stamp.secs'][4500:] - self.imu_data['header.stamp.secs'][4500]
+        # unit1 = np.cos(CPF[1:])*fv[1:]
+        # unit2 = -np.sin(CPF[1:])*fv[1:]
+        # unit3 = np.cos(CPF[1:])*fv[1:]
+        # unit4 = np.sin(CPF[1:])*fv[1:]
+        
+        # ve = unit1+unit2
+        # vn = unit3+unit4
+
+        Cf_yaw = CPF - 1.8325993885076001799
+
+        Vn = np.cos(Cf_yaw)*fv - np.sin(Cf_yaw)*fv
+        Ve = np.sin(Cf_yaw)*fv + np.cos(Cf_yaw)*fv
+
+        Xe = np.zeros_like(Ve)
+        Xe[0] = Ve[0]
+        Xe[1:] = integrate.cumtrapz(Ve,dx=0.05)
+        Xe = Xe/3
+        Xn = np.zeros_like(Vn)
+        Xn[0] = Vn[0]
+        Xn[1:] = integrate.cumtrapz(Vn,dx=0.05)
+        Xn = Xn/3
+
+        # dist_x = gps_data['UTM_easting'][start3_gps:]
+        # dist_y = gps_data['UTM_northing'][start3_gps:]
+        # dist_x = dist_x - dist_x[500]
+        # dist_y = dist_y - dist_y[500]
+
+        sea.scatterplot(y = Xn,x = Xe, label = 'Estimated Traj from IMU')
+        sea.scatterplot(y = north,x = east, label = 'Traj from GPS')
+        plt.title("Ground truth trajectory vs estimated")
+        plt.axis('scaled')
+        plt.xlabel('UTM East (m)')
+        plt.ylabel('UTM North (m)')
+        # for i in range(len(CPF)):
+        #     est = fwdVel[i]*np.array(((np.cos(CPF[i]),np.sin(CPF[i])), (-np.sin(CPF[i]),np.cos(CPF[i]))))
+        #     print(est)
+        #     newtraj.append(est)
+        #     ve.append(est[0:0] + est[0:1])
+        #     vn.append(est[1:0] + est[1:1])
+
+        # sea.lineplot(x = ve,y=vn,label = "traj")
+        plt.grid()
+        filename = 'plot-' + str('est_traj') +'.png'
+        plt.savefig(filename)
+        plt.show()
+
+
+if __name__ == '__main__':
+    imu_data = '/home/yash/Desktop/Lab_4/EECE5554/LAB4/src/Data/data_driving/imu.csv'
+    gps_data = '/home/yash/Desktop/Lab_4/EECE5554/LAB4/src/Data/data_driving/gps.csv'
+
+    calibrated_mag_csv = '/home/yash/Desktop/Lab_4/EECE5554/LAB4/src/Data/calib_mag_all.csv'
+    velEst = vel_est(imu_data)
+    imuVel = velEst.fromaccelnew()
+    # velEst.vel()
+    # velEst.findStatPos()
+    gpsVel = velEst.fromGps(gps_data)
+    velEst.displacement(gpsVel,imuVel)
+    # velEst.COMEst(gpsVel,imuVel)
+
+    # yaw = yaw_estimate(calibrated_mag_csv)
+    # magYaw = yaw.from_mag()
+    # gyroYaw = yaw.gyro_integrate(imu_data)
+    # magLPF = yaw.magLowPassFilter(magYaw)
+    # gyroHPF = yaw.gyroHighPassFilter(gyroYaw)
+    # yaw.imu_yaw()
+    # CPF = yaw.CPF(magLPF,gyroHPF)
+    # velEst.trajEst(CPF,imuVel,gps_data)
+
+
